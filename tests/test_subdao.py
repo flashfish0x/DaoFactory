@@ -4,7 +4,7 @@ import brownie
 
 
 
-def test_subdaos(web3,LiquidityGuageV4, Voter, chain, GovernanceToken, SubDaoFactory, gov, yfi_whale, yfi):
+def test_subdaos(web3,LiquidityGuageV4, SimpleVesting, Voter, chain, GovernanceToken, SubDaoFactory, gov, yfi_whale, yfi):
 
     factory = gov.deploy(SubDaoFactory)
     ve_yfi = gov.deploy(LiquidityGuageV4, yfi, factory)
@@ -19,14 +19,20 @@ def test_subdaos(web3,LiquidityGuageV4, Voter, chain, GovernanceToken, SubDaoFac
     to_open_treasury = 25*1e18
     to_team = 25*1e18
 
+    vestingLength = 1000 # seconds
+    cliffLength = 500
+
+    share = [to_yfi, to_locked_treasury, to_open_treasury, to_team]
+
     launchPhase = 10 # 10 blocks (real life will be more like 6 months)
     votePeriod = 10 # 10 blocks (real life will be more like 7 days)
 
    
-    tx = factory.newSubDao("poolpiDAO", "POO", gov, to_yfi, to_locked_treasury, to_open_treasury, to_team, launchPhase, votePeriod)
+    tx = factory.newSubDao("poolpiDAO", "POO", gov, share, launchPhase, votePeriod, cliffLength, vestingLength)
     
     token = GovernanceToken.at(tx.events["NewSubDao"]["govToken"])
     voter = Voter.at(tx.events["NewSubDao"]["voter"])
+    vester = SimpleVesting.at(tx.events["NewSubDao"]["teamVester"])
 
     assert token.totalSupply() == to_yfi + to_locked_treasury + to_open_treasury + to_team
     assert token.balanceOf(voter) == to_locked_treasury
@@ -36,7 +42,7 @@ def test_subdaos(web3,LiquidityGuageV4, Voter, chain, GovernanceToken, SubDaoFac
     chain.mine(1)
     assert ve_yfi.claimable_reward(yfi_whale, token) > 0
 
-    tx2 = factory.newSubDao("poolpiDAO2", "POO2", gov, to_yfi, to_locked_treasury, to_open_treasury, to_team, launchPhase, votePeriod)
+    tx2 = factory.newSubDao("poolpiDAO2", "POO2", gov, share, launchPhase, votePeriod, cliffLength, vestingLength)
     
     token2 = GovernanceToken.at(tx.events["NewSubDao"]["govToken"])
     voter2 = Voter.at(tx.events["NewSubDao"]["voter"])
@@ -65,5 +71,17 @@ def test_subdaos(web3,LiquidityGuageV4, Voter, chain, GovernanceToken, SubDaoFac
 
     voter.endVote({"from": yfi_whale})
     assert voter.winner() == yfi_whale
+
+    assert vester.totalVested() == 0
+    chain.sleep(600)
+    chain.mine(1)
+    toWithdraw = vester.totalVested()
+    print(toWithdraw/1e18)
+    assert toWithdraw > 0
+
+    vester.claim(gov, {'from': gov} )
+    toWithdraw = vester.withdrawableAmount()
+    assert toWithdraw == 0
+
 
 

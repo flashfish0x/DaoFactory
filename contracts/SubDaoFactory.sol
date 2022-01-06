@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "./GovernanceToken.sol";
 import "./Voter.sol";
+import "./SimpleVesting.sol";
 
 interface VeYFI {
     function add_reward(address reward, address distributor) external;
@@ -20,11 +21,12 @@ contract SubDaoFactory is AccessControl{
     using SafeERC20 for IERC20;
     using SafeMath for uint256;
 
-    event NewSubDao(address govToken, address voter, uint256 voteStart, uint256 voteEnd);
+    event NewSubDao(address govToken, address voter, address teamVester, uint256 voteStart, uint256 voteEnd);
 
 
     address public tokenImplementation;
     address public voterImplementation;
+    address public vestingImplementation;
     mapping(address => DaoInfo) daos;
 
     // Info of each subDao.
@@ -34,6 +36,7 @@ contract SubDaoFactory is AccessControl{
         uint256 voteStart; 
         uint256 voteEnd;
         address originalGov;
+        address teamVester;
     }
 
     address public veYfi;
@@ -42,28 +45,30 @@ contract SubDaoFactory is AccessControl{
         _setupRole(DEFAULT_ADMIN_ROLE, _msgSender());
     }
 
-    function newSubDao(string memory _name, string memory _symbol, address initialMultisig, uint256 toYfi, uint256 toLockedTreasury, uint256 toOpenTreasury, uint256 toTeam, uint256 launchPhase, uint256 votePeriod) external{
+    function newSubDao(
+        string memory _name, 
+        string memory _symbol, 
+        address initialMultisig, 
+        uint256[4] memory initialSupplyBreakdown, //0 - yfi share, 1 - locked treasury, 2 - unlocked treasury, 3 - team vesting share
+        uint256 launchPhase, 
+        uint256 votePeriod,
+        uint256 vestCliff,
+        uint256 vestDuration) external{
+        require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()), "Admin Only");
         require(veYfi != address(0), "veYFI not set");
 
-        uint256 totalSupply = toYfi.add(toLockedTreasury).add(toOpenTreasury).add(toTeam); 
+        uint256 totalSupply = initialSupplyBreakdown[0].add(initialSupplyBreakdown[1]).add(initialSupplyBreakdown[2]).add(initialSupplyBreakdown[3]); 
 
         //create governance token
-        GovernanceToken gt;
-
-        if(tokenImplementation == address(0)){
-            gt = new GovernanceToken();
-        }else{
-            gt = GovernanceToken(clone(tokenImplementation));
-            
-        }
+        GovernanceToken gt = GovernanceToken(createToken());
         gt.initialise(_name, _symbol, totalSupply);
 
-        Voter vt;
-        if(voterImplementation == address(0)){
-            vt = new Voter();
-        }else{
-            vt = Voter(clone(voterImplementation));
-        }
+        //creat  team vesting
+        SimpleVesting sv = SimpleVesting(createVester());
+        sv.initialise(address(gt), initialMultisig, vestCliff, vestDuration);
+
+        //create voter
+        Voter vt = Voter(createVoter());
         (uint256 launchBlock, uint256 voteStart, uint256 voteEnd) = vt.initialise(launchPhase, votePeriod, address(gt));
 
         daos[address(gt)] = DaoInfo({
@@ -71,20 +76,49 @@ contract SubDaoFactory is AccessControl{
             launchBlock: launchBlock,
             voteStart: voteStart,
             voteEnd: voteEnd,
-            originalGov: initialMultisig
+            originalGov: initialMultisig,
+            teamVester : address(sv)
         });
 
         //we are using the outthebox liquidity guage. which means 1 week liquidity mining. havent bothered changing as this isnt the true veYFI
         VeYFI(veYfi).add_reward(address(gt), address(this));
-        gt.approve(veYfi, toYfi);
-        VeYFI(veYfi).deposit_reward_token(address(gt), toYfi);
+        gt.approve(veYfi, initialSupplyBreakdown[0]);
+        VeYFI(veYfi).deposit_reward_token(address(gt), initialSupplyBreakdown[0]);
 
         
-        gt.transfer(address(vt), toLockedTreasury);
-        gt.transfer(initialMultisig, toTeam);
+        gt.transfer(address(vt), initialSupplyBreakdown[1]);
+        gt.transfer(initialMultisig, initialSupplyBreakdown[2]);
+        gt.transfer(address(sv), initialSupplyBreakdown[3]);
 
-        emit NewSubDao(address(gt), address(vt), voteStart, voteEnd);
+        emit NewSubDao(address(gt), address(vt), address(sv), voteStart, voteEnd);
         
+    }
+
+    function createVester() internal returns(address){
+        if(vestingImplementation == address(0)){
+           vestingImplementation = address(new SimpleVesting());
+           return vestingImplementation;
+        }else{
+            return(clone(vestingImplementation));
+        }
+    }
+    function createToken() internal returns(address){
+        if(tokenImplementation == address(0)){
+            tokenImplementation = address(new GovernanceToken());
+            return tokenImplementation;
+        }else{
+            return(clone(tokenImplementation));
+            
+        }
+    }
+    function createVoter() internal returns(address){
+        if(voterImplementation == address(0)){
+            voterImplementation = address(new Voter());
+            return voterImplementation;
+        }else{
+            return(clone(voterImplementation));
+            
+        }
     }
 
     //we give governance to simple. it waits until vote is set.
