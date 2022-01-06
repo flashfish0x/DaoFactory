@@ -10,6 +10,7 @@ import "./Voter.sol";
 
 interface VeYFI {
     function add_reward(address reward, address distributor) external;
+    function deposit_reward_token(address reward, uint256 amount) external;
 }
 
 
@@ -18,7 +19,10 @@ interface VeYFI {
 contract SubDaoFactory is AccessControl{
     using SafeERC20 for IERC20;
     using SafeMath for uint256;
-    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
+
+    event NewSubDao(address govToken, address voter, uint256 voteStart, uint256 voteEnd);
+
+
     address public tokenImplementation;
     address public voterImplementation;
     mapping(address => DaoInfo) daos;
@@ -38,7 +42,7 @@ contract SubDaoFactory is AccessControl{
         _setupRole(DEFAULT_ADMIN_ROLE, _msgSender());
     }
 
-    function newSubDao(string memory _name, string memory _symbol, address initialMultisig, uint256 toYfi, uint256 toLockedTreasury, uint256 toOpenTreasury, uint256 toTeam, uint256 launchPhase, uint256 votePeriod) external returns (address govToken){
+    function newSubDao(string memory _name, string memory _symbol, address initialMultisig, uint256 toYfi, uint256 toLockedTreasury, uint256 toOpenTreasury, uint256 toTeam, uint256 launchPhase, uint256 votePeriod) external{
         require(veYfi != address(0), "veYFI not set");
 
         uint256 totalSupply = toYfi.add(toLockedTreasury).add(toOpenTreasury).add(toTeam); 
@@ -60,19 +64,26 @@ contract SubDaoFactory is AccessControl{
         }else{
             vt = Voter(clone(voterImplementation));
         }
-        govToken = address(gt);
-        (uint256 launchBlock, uint256 voteStart, uint256 voteEnd) = vt.initialise(launchPhase, votePeriod, govToken);
+        (uint256 launchBlock, uint256 voteStart, uint256 voteEnd) = vt.initialise(launchPhase, votePeriod, address(gt));
 
-        
-        
-
-        daos[govToken] = DaoInfo({
+        daos[address(gt)] = DaoInfo({
             voter: address(vt),
             launchBlock: launchBlock,
             voteStart: voteStart,
             voteEnd: voteEnd,
             originalGov: initialMultisig
         });
+
+        //we are using the outthebox liquidity guage. which means 1 week liquidity mining. havent bothered changing as this isnt the true veYFI
+        VeYFI(veYfi).add_reward(address(gt), address(this));
+        gt.approve(veYfi, toYfi);
+        VeYFI(veYfi).deposit_reward_token(address(gt), toYfi);
+
+        
+        gt.transfer(address(vt), toLockedTreasury);
+        gt.transfer(initialMultisig, toTeam);
+
+        emit NewSubDao(address(gt), address(vt), voteStart, voteEnd);
         
     }
 

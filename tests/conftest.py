@@ -4,11 +4,11 @@ from brownie import Wei, config
 
 
 @pytest.fixture
-def whale(accounts,dai):
-    #compounddai
-    acc = accounts.at('0x5d3a536E4D6DbD6114cc1Ead35777bAB948E3643', force=True)
+def yfi_whale(accounts,yfi):
+    #maker yfi
+    acc = accounts.at('0x3ff33d9162aD47660083D7DC4bC02Fb231c81677', force=True)
 
-    assert dai.balanceOf(acc) > 0
+    assert yfi.balanceOf(acc) > 0
 
     yield acc
 
